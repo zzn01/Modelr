@@ -2,7 +2,7 @@ DERIVED    := .derived
 XCODEBUILD := xcodebuild -project Modelr.xcodeproj -scheme Modelr \
               -derivedDataPath $(DERIVED)
 
-.PHONY: run build release package test smoke gen clean
+.PHONY: run run-release build release package test smoke gen clean
 
 # Build (Debug) and launch the app
 run: build
@@ -19,6 +19,14 @@ build: gen
 release: gen
 	$(XCODEBUILD) -configuration Release ARCHS=arm64 CODE_SIGNING_ALLOWED=YES build
 	@echo "app: $(DERIVED)/Build/Products/Release/Modelr.app"
+
+# Optimized local run: an unsigned Release build (same -O / Float16 paths as the
+# distributed app, so performance matches — Debug `run` is far slower). Skips code
+# signing so it builds without the release team certificate; a locally-built app
+# runs without Gatekeeper quarantine.
+run-release: gen
+	$(XCODEBUILD) -configuration Release ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build
+	open $(DERIVED)/Build/Products/Release/Modelr.app
 
 # Zip a signed Release app for distribution. `ditto` preserves the app bundle's
 # metadata and resource forks, unlike a plain `zip` invocation.
