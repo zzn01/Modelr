@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// A user-pickable export format for the generated mesh.
 enum MeshExportFormat: String, CaseIterable, Identifiable {
@@ -67,7 +68,9 @@ enum MeshExporter {
         let mesh = try read(meshURL: meshURL, textureURL: texture,
                             metallicRoughnessURL: metallicRoughness)
         switch format {
-        case .stl: try encodeSTL(mesh).write(to: dest)
+        // STL is the 3D-printing format: repair the geometry first so slicers accept
+        // it without a "not watertight / non-manifold" warning (§ mesh-repair spec).
+        case .stl: try encodeSTL(makePrintable(mesh)).write(to: dest)
         case .ply: try encodePLY(mesh).write(to: dest)
         case .glb: try encodeGLB(mesh).write(to: dest)
         case .obj:
@@ -137,6 +140,33 @@ enum MeshExporter {
             for i in 0..<count { out[i] = raw.loadUnaligned(fromByteOffset: i * 4, as: UInt32.self) }
         }
         return out
+    }
+
+    // MARK: - print repair (STL)
+
+    /// Run `MeshRepair` over the mesh geometry and return a geometry-only `MeshData`
+    /// (STL carries no normals/UVs/texture — `encodeSTL` recomputes face normals).
+    /// Bridges the exporter's flat arrays to MeshRepair's SIMD3 representation.
+    static func makePrintable(_ mesh: MeshData) -> MeshData {
+        var positions = [SIMD3<Float>](); positions.reserveCapacity(mesh.vertCount)
+        for i in 0..<mesh.vertCount {
+            positions.append(SIMD3(mesh.verts[i*3], mesh.verts[i*3+1], mesh.verts[i*3+2]))
+        }
+        var faces = [SIMD3<UInt32>](); faces.reserveCapacity(mesh.faceCount)
+        for f in 0..<mesh.faceCount {
+            faces.append(SIMD3(mesh.indices[f*3], mesh.indices[f*3+1], mesh.indices[f*3+2]))
+        }
+        let r = MeshRepair.makePrintable(positions: positions, faces: faces)
+
+        var verts = [Float](repeating: 0, count: r.positions.count * 3)
+        for (i, p) in r.positions.enumerated() { verts[i*3] = p.x; verts[i*3+1] = p.y; verts[i*3+2] = p.z }
+        var idx = [UInt32](repeating: 0, count: r.faces.count * 3)
+        for (i, f) in r.faces.enumerated() { idx[i*3] = f.x; idx[i*3+1] = f.y; idx[i*3+2] = f.z }
+
+        return MeshData(vertCount: r.positions.count, faceCount: r.faces.count,
+                        verts: verts, normals: [], uvs: nil, indices: idx,
+                        rawVerts: Data(), rawNormals: Data(), rawUVs: nil, rawFaces: Data(),
+                        texturePNG: nil, metallicRoughnessPNG: nil)
     }
 
     // MARK: - STL (binary, little-endian)
